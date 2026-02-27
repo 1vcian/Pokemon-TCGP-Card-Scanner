@@ -155,16 +155,32 @@ const PokemonCardDetector: React.FC<PokemonCardDetectorProps> = ({ onDetectionCo
           detections.detections
             .filter((detection) => detection.confidence >= 50)
             .map(async (detection) => {
-              const points = detection.points
-              const [x1, y1] = points[0]
-              const [x2, y2] = points[2]
-              const width = x2 - x1
-              const height = y2 - y1
+              const { angle = 0, centerX, centerY, width, height } = detection
 
-              canvas.width = width
-              canvas.height = height
+              if (width && height && centerX && centerY) {
+                canvas.width = Math.round(width)
+                canvas.height = Math.round(height)
 
-              ctx?.drawImage(image, x1, y1, width, height, 0, 0, width, height)
+                ctx?.save()
+                ctx?.translate(canvas.width / 2, canvas.height / 2)
+                ctx?.rotate(-angle)
+                ctx?.translate(-centerX, -centerY)
+
+                ctx?.drawImage(image, 0, 0)
+                ctx?.restore()
+              } else {
+                // Fallback for older interface without center and angle
+                const points = detection.points
+                const [x1, y1] = points[0]
+                const [x2, y2] = points[2]
+                const w = x2 - x1
+                const h = y2 - y1
+
+                canvas.width = Math.max(1, w)
+                canvas.height = Math.max(1, h)
+
+                ctx?.drawImage(image, x1, y1, w, h, 0, 0, w, h)
+              }
 
               const cardImageUrl = canvas.toDataURL('image/png')
               const hash = await hashingService.calculatePerceptualHash(cardImageUrl)
@@ -194,10 +210,10 @@ const PokemonCardDetector: React.FC<PokemonCardDetectorProps> = ({ onDetectionCo
                 hash,
                 matchedCard: bestMatch
                   ? {
-                      id: bestMatch.id,
-                      distance: bestMatch.distance,
-                      imageUrl: `${import.meta.env.BASE_URL}images/${bestMatch.card.image?.split('/').at(-1)}`,
-                    }
+                    id: bestMatch.id,
+                    distance: bestMatch.distance,
+                    imageUrl: `${import.meta.env.BASE_URL}images/${bestMatch.card.image?.split('/').at(-1)}`,
+                  }
                   : undefined,
                 topMatches,
                 selected: true, // Default to selected
@@ -313,49 +329,48 @@ const PokemonCardDetector: React.FC<PokemonCardDetectorProps> = ({ onDetectionCo
     }
   }
 
-const handleConfirm = async () => {
-  setIsProcessing(true)
+  const handleConfirm = async () => {
+    setIsProcessing(true)
 
-  const selectedCards = extractedCards.filter((card) => card.selected && card.matchedCard)
+    const selectedCards = extractedCards.filter((card) => card.selected && card.matchedCard)
 
-  if (selectedCards.length > 0) {
-    try {
-      // Lanciamo confetti generici colorati per ogni carta selezionata
-      selectedCards.forEach((card, index) => {
-        setTimeout(() => {
-          confetti({
-            particleCount: 150,
-            spread: 120,
-            origin: { y: 0.6, x: 0.5 + (Math.random() * 0.4 - 0.2) },
-            colors: ['#f44336', '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3', '#03a9f4', '#00bcd4', '#ffeb3b', '#ff9800'],
-            scalar: 1.5,
-            shapes: ['circle', 'square'],
-            ticks: 300
-          });
-        }, index * 300);
-      });
+    if (selectedCards.length > 0) {
+      try {
+        // Lanciamo confetti generici colorati per ogni carta selezionata
+        selectedCards.forEach((card, index) => {
+          setTimeout(() => {
+            confetti({
+              particleCount: 150,
+              spread: 120,
+              origin: { y: 0.6, x: 0.5 + (Math.random() * 0.4 - 0.2) },
+              colors: ['#f44336', '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3', '#03a9f4', '#00bcd4', '#ffeb3b', '#ff9800'],
+              scalar: 1.5,
+              shapes: ['circle', 'square'],
+              ticks: 300
+            });
+          }, index * 300);
+        });
 
-      setIsOpen(false)
-      setExtractedCards([])
-      setResults([])
-      setImages([])
-      setAmount(1)
-      setShowPotentialMatches(false)
-    } catch (error) {
-      console.error('Error processing cards:', error)
+        setIsOpen(false)
+        setExtractedCards([])
+        setResults([])
+        setImages([])
+        setAmount(1)
+        setShowPotentialMatches(false)
+      } catch (error) {
+        console.error('Error processing cards:', error)
+      }
     }
-  }
 
-  setIsProcessing(false)
-}
+    setIsProcessing(false)
+  }
 
   const renderPotentialMatches = (card: ExtractedCard, index: number) => {
     return (
       <div
         key={index}
-        className={`border rounded-md p-2 cursor-pointer transition-all duration-200 ${
-          card.selected ? 'border-blue-300 bg-blue-50 dark:bg-blue-900/70' : 'border-gray-200 grayscale'
-        }`}
+        className={`border rounded-md p-2 cursor-pointer transition-all duration-200 ${card.selected ? 'border-blue-300 bg-blue-50 dark:bg-blue-900/70' : 'border-gray-200 grayscale'
+          }`}
         onClick={() => handleSelect(index, !card.selected)}
       >
         <div className="flex flex-col items-center">

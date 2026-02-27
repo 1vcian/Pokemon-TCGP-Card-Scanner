@@ -5,6 +5,11 @@ export interface BoundingBox {
   confidence: number
   class: string
   label?: number
+  angle?: number
+  centerX?: number
+  centerY?: number
+  width?: number
+  height?: number
 }
 
 export interface DetectionResult {
@@ -18,7 +23,7 @@ class PokemonCardDetectorService {
   private modelLoading: Promise<void> | null = null
   private numClass = 1
 
-  private constructor() {}
+  private constructor() { }
 
   public static getInstance(): PokemonCardDetectorService {
     if (!PokemonCardDetectorService.instance) {
@@ -142,7 +147,7 @@ class PokemonCardDetectorService {
 
       const predictions = this.model.predict(input) as tf.Tensor
 
-      const [boxes, scores, classes] = tf.tidy(() => {
+      const [boxes, scores, classes, angles, boxesTransposed] = tf.tidy(() => {
         let transRes: tf.Tensor
 
         if (predictions instanceof tf.Tensor && predictions.shape.length === 3 && predictions.shape[0] === 1) {
@@ -163,17 +168,27 @@ class PokemonCardDetectorService {
         const y2 = tf.add(y1, h)
         const boxes = tf.concat([y1, x1, y2, x2], 1)
 
-        const scoresSlice = transRes.slice([4, 0], [1, -1]).squeeze()
-        const classesSlice = transRes.slice([5, 0], [this.numClass, -1])
-        const scores = scoresSlice
-        const classes = tf.argMax(classesSlice, 0)
+        const classScores = transRes.slice([4, 0], [this.numClass, -1])
+        const scores = tf.max(classScores, 0)
+        const classes = tf.argMax(classScores, 0)
 
-        return [boxes, scores, classes]
+        const numDimensions = transRes.shape[0]
+        let angles = tf.zerosLike(scores)
+        if (numDimensions !== undefined && numDimensions > 4 + this.numClass) {
+          angles = transRes.slice([4 + this.numClass, 0], [1, -1]).squeeze()
+        }
+
+        return [boxes, scores, classes, angles, boxesTransposed]
       })
 
       const nms = await tf.image.nonMaxSuppressionAsync(boxes as tf.Tensor2D, scores as tf.Tensor1D, 100, iouThreshold, scoreThreshold)
 
-      const detections = tf.tidy(() => tf.concat([boxes.gather(nms, 0), scores.gather(nms, 0).expandDims(1), classes.gather(nms, 0).expandDims(1)], 1))
+      const detections = tf.tidy(() => tf.concat([
+        boxesTransposed.gather(nms, 0),
+        scores.gather(nms, 0).expandDims(1),
+        classes.gather(nms, 0).expandDims(1),
+        angles.gather(nms, 0).expandDims(1)
+      ], 1))
 
       const detData = detections.dataSync()
       const numDetections = detections.shape[0]
@@ -183,31 +198,49 @@ class PokemonCardDetectorService {
       const scaleY = originalHeight / paddedHeight
 
       for (let i = 0; i < numDetections; i++) {
-        const offset = i * 6
-        const y1 = detData[offset]
-        const x1 = detData[offset + 1]
-        const y2 = detData[offset + 2]
-        const x2 = detData[offset + 3]
+        const offset = i * 7
+        const x = detData[offset]
+        const y = detData[offset + 1]
+        const w = detData[offset + 2]
+        const h = detData[offset + 3]
         const score = detData[offset + 4]
         const label = detData[offset + 5]
+        const angle = detData[offset + 6]
 
-        const origX1 = (x1 * originalWidth) / 640 / scaleX
-        const origY1 = (y1 * originalHeight) / 640 / scaleY
-        const origX2 = (x2 * originalWidth) / 640 / scaleX
-        const origY2 = (y2 * originalHeight) / 640 / scaleY
+        const origX = (x * originalWidth) / 640 / scaleX
+        const origY = (y * originalHeight) / 640 / scaleY
+        const origW = (w * originalWidth) / 640 / scaleX
+        const origH = (h * originalHeight) / 640 / scaleY
 
-        const points = [
-          [origX1, origY1],
-          [origX2, origY1],
-          [origX2, origY2],
-          [origX1, origY2],
+        const cosA = Math.cos(angle)
+        const sinA = Math.sin(angle)
+
+        const hw = origW / 2
+        const hh = origH / 2
+
+        const corners = [
+          [-hw, -hh],
+          [hw, -hh],
+          [hw, hh],
+          [-hw, hh]
         ]
+
+        const points = corners.map(([cx, cy]) => {
+          const rx = cx * cosA - cy * sinA
+          const ry = cx * sinA + cy * cosA
+          return [origX + rx, origY + ry]
+        })
 
         boundingBoxes.push({
           points,
           confidence: score * 100,
           class: 'pokemon_card',
           label: label,
+          angle: angle,
+          centerX: origX,
+          centerY: origY,
+          width: origW,
+          height: origH,
         })
       }
 
