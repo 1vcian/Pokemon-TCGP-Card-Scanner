@@ -37,8 +37,8 @@ For training, I created a robust synthetic dataset using a custom script called 
 
 This approach ensured the model would generalize well even in challenging scenarios, such as cluttered or distorted screenshots. 
 
-The final training dataset of **10,000 cards** is available [here](https://hub.ultralytics.com/datasets/8awcqoIQP0jIXIMDOCsC).  
-The fully trained model can be found [here](https://hub.ultralytics.com/models/dQfecRsRsXbAKXOXHLHJ), delivering excellent detection results.
+The final training dataset of **10,000 cards** is available [here](https://platform.ultralytics.com/1vcian/datasets/pockemon-tcg-obb-10k).  
+The fully trained model can be found [here](https://platform.ultralytics.com/1vcian/pokemoncarddetector), delivering excellent detection results.
 
 The model’s ability to detect cards independently of their artwork, focusing solely on their shape and orientation, significantly improved robustness and flexibility.
 
