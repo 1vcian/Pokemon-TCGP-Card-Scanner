@@ -4,23 +4,25 @@
 ---
 
 ## Project Overview
-This project extends the functionality of the [TCG Pocket Collection Tracker](https://github.com/marcelpanse/tcg-pocket-collection-tracker) by implementing a Pokémon card recognition feature. The goal was to allow users to upload a screenshot of their collection and automatically update their personal collection without manually searching for each individual card. This approach results in a fully autonomous feature that will never need to be updated when new cards are added to the game — as long as the card's image exists in the database, the system will continue to function seamlessly.
+This project extends the functionality of the [TCG Pocket Collection Tracker](https://github.com/marcelpanse/tcg-pocket-collection-tracker) by implementing a Pokémon card recognition feature. The goal was to allow users to upload a screenshot of their collection and automatically update their personal collection without manually searching for each individual card.
+
+The detector never needs to be retrained when new cards are added to the game: it only finds where the cards are, and the identification is done by matching against the card image database. As long as a card's image is in the database, the system recognizes it.
 
 ## Motivation and Approach
 ### Initial Attempts
 **1. Traditional Approach with OpenCV:**  
-I first attempted a classical image recognition approach using OpenCV’s image pattern matching techniques. Specifically, I used template matching and feature detection methods. However, this method proved both inaccurate and inefficient due to the ever-growing number of cards in the game’s database. The high number of possible matches increased the computation time dramatically, and the results were not always precise due to variations in lighting, scaling, and potential image distortions.
+I first attempted a classical image recognition approach using OpenCV's image pattern matching techniques. Specifically, I used template matching and feature detection methods. However, this method proved both inaccurate and inefficient due to the ever-growing number of cards in the game's database. The high number of possible matches increased the computation time dramatically, and the results were not always precise due to variations in lighting, scaling, and potential image distortions.
 
 **2. Filtering and Polygon Detection:**  
-Next, I focused on optimizing the search by first extracting individual cards from screenshots. I applied various image filters, such as adaptive thresholding, color space transformations, and edge detection. Using contour detection, I searched for polygons with an aspect ratio of 1.7 (matching Pokémon card dimensions). Once potential card candidates were extracted, I used a Hamming distance algorithm on perceptual hashes of the images to compare them against precomputed hashes from the card database. 
+Next, I focused on optimizing the search by first extracting individual cards from screenshots. I applied various image filters, such as adaptive thresholding, color space transformations, and edge detection. Using contour detection, I searched for polygons with an aspect ratio of 1.7 (matching Pokémon card dimensions). Once potential card candidates were extracted, I used a Hamming distance algorithm on perceptual hashes of the images to compare them against precomputed hashes from the card database.
 
-This method led to significant improvements in execution speed because it reduced the search space. However, the extraction quality was still inconsistent — issues like partial occlusion, overlapping cards, and distortions led to frequent misdetections or missed cards.
+This method led to significant improvements in execution speed because it reduced the search space. However, the extraction quality was still inconsistent: issues like partial occlusion, overlapping cards, and distortions led to frequent misdetections or missed cards.
 
 ### Machine Learning Approach
 **3. Oriented Bounding Box Detection with YOLO11 Nano OBB:**  
 To enhance card detection, I switched to a machine learning approach using an oriented bounding box (OBB) model. I chose the **YOLO11 Nano OBB** model for its balance of accuracy and performance, especially on edge devices with limited resources.
 
-For training, I created a robust synthetic dataset using a custom script called `trainCreator.py`. This script:
+For training, I created a synthetic dataset using a custom script called `trainCreator.py`. This script:
 - Picks a random background image from the [Sample Images Repository](https://github.com/yavuzceliker/sample-images)
 - Overlays between 1 and 50 random Pokémon cards from the [TCG Pocket Collection Tracker image database](https://github.com/marcelpanse/tcg-pocket-collection-tracker/tree/main/frontend/public/images)
 - Applies random transformations like:
@@ -31,48 +33,55 @@ For training, I created a robust synthetic dataset using a custom script called 
   - Color augmentation
   - Image noise
   - Overlapping objects
-  - Some random grids generated images
+  - Randomly generated grid layouts
 - Saves the generated images along with their bounding box data in the appropriate YOLO format
 
 <p align="center"><img width="672" alt="image" src="https://github.com/user-attachments/assets/2d1055da-f2b6-493c-81ea-b0dc57aaec41" /></p>
 
-This approach ensured the model would generalize well even in challenging scenarios, such as cluttered or distorted screenshots. 
+This approach helps the model generalize to cluttered or distorted screenshots.
 
 The final training dataset of **10,000 cards** is available [here](https://platform.ultralytics.com/1vcian/datasets/pockemon-tcg-obb-10k).  
-The fully trained model can be found [here](https://platform.ultralytics.com/1vcian/pokemoncarddetector), delivering excellent detection results.
+The trained model is available [here](https://platform.ultralytics.com/1vcian/pokemoncarddetector).
 
-#### Model Evaluation & Performance Metrics
-After training for 100 epochs, the model achieved exceptional validation benchmarks across both bounding box localization and mask/segmentation accuracy:
+#### Model Evaluation
+The OBB detector (`ptcg-detector`) was trained for **20 epochs**. On the synthetic validation set it reaches:
 
-| Metric | Bounding Box (Box) | Mask / Segmentation (M) |
+| Metric | Value |
+|---|---|
+| **mAP50-95** | **99.5%** (0.995, the maximum Ultralytics reports) |
+| **Precision** | > 99.5% |
+| **Recall** | > 99.5% |
+
+In practice the detector is perfect on the validation set from the first epoch, at every IoU threshold. These numbers are measured on synthetic images generated by the same script used for training, so they show that the model has fully learned the task on that data distribution, not how it performs on real screenshots, where accuracy may be lower.
+
+The model detects cards by their shape and orientation, independently of their artwork, which is what makes it robust to new card sets.
+
+#### Earlier experiment: instance segmentation
+Before settling on OBB, I also trained a YOLO segmentation model (≈ 110 epochs) to crop cards with pixel-level masks. Its final validation metrics:
+
+| Metric | Box (B) | Mask (M) |
 |---|---|---|
-| **mAP50** | **98.5%** (0.9854) | **96.3%** (0.9604) |
-| **mAP50-95** | **97.4%** (0.9739) | **77.5%** (0.7718) |
-| **Precision** | **99.5%** (0.9953) | **97.4%** (0.9722) |
-| **Recall** | **97.4%** (0.9742) | **95.4%** (0.9517) |
+| **Precision** | 99.5% (0.9953) | 97.2% (0.9722) |
+| **Recall** | 97.4% (0.9742) | 95.2% (0.9517) |
+| **mAP50-95** | 97.4% (0.9739) | 77.2% (0.7718) |
 
-- **Near-Zero False Positives:** With a Box Precision of **99.5%**, the model almost never misclassifies background elements as Pokémon cards.
-- **High Segmentation Accuracy:** A Mask mAP50-95 of **77.5%** ensures that cards are cropped out with pixel-level precision, even when rotated or partially overlapping, providing clean input for the subsequent perceptual hashing stage.
-
-The model’s ability to detect cards independently of their artwork, focusing solely on their shape and orientation, significantly improved robustness and flexibility.
+Oriented bounding boxes turned out to be enough for clean crops, with a simpler output to decode in the browser, so the OBB model is the one used in the app.
 
 ## Implementation
 **4. Model Integration with React and TensorFlow.js:**  
 I integrated the trained YOLO11 Nano OBB model into the React frontend using **TensorFlow.js**. After several iterations and extensive debugging to properly interpret the tensor outputs, I successfully extracted oriented bounding boxes and their associated confidence scores.
 
-The bounding boxes provided precise locations and orientations of the detected cards, enabling accurate cropping of card images for the next phase of processing.
+The bounding boxes provide the location and orientation of the detected cards, enabling accurate cropping of card images for the next phase of processing.
 
 **5. Hash Matching and Optimization:**  
 Once the card bounding boxes were identified, I implemented a **24-bit perceptual hash** algorithm for card recognition. To enhance efficiency:
-- Precomputed hashes were stored in **IndexedDB** to avoid regenerating them repeatedly
-- Implemented a **service worker cache** for faster image retrieval
+- Precomputed hashes are stored in **IndexedDB** to avoid regenerating them repeatedly
+- A **service worker cache** speeds up image retrieval
 
-Instead of using traditional grayscale hashing, I adapted the perceptual hash to consider all three **RGB channels**, leading to greater color-based precision when identifying cards. This RGB-aware hashing method allowed the system to differentiate between cards with similar layouts but distinct color schemes.
+Instead of using traditional grayscale hashing, I adapted the perceptual hash to consider all three **RGB channels**, leading to greater color-based precision when identifying cards. This RGB-aware hashing allows the system to differentiate between cards with similar layouts but distinct color schemes.
 
 **6. Autonomous and Future-Proof Design:**  
-One of the most significant benefits of this approach is its long-term maintainability. Because the recognition pipeline relies on matching detected cards against a database of images with precomputed hashes, it requires no future updates when new cards are introduced. As long as the image of a new card exists in the database, the system will recognize and process it without any additional development effort.
-
-This ensures the feature remains fully functional and scalable, even as the Pokémon card collection grows.
+Because recognition relies on matching detected cards against a database of images with precomputed hashes, the model never needs retraining when new cards are introduced. Supporting a new set only requires adding its card images and data to the database, with no changes to the model or the code.
 
 <p align="center">https://github.com/user-attachments/assets/3b761015-12d8-4eab-aac2-b4ce7214d8af</p>
 
@@ -83,30 +92,28 @@ You can **adjust the hash length** to balance between recognition accuracy and p
 - **Card detection threshold**: Currently set to `0.1`, this defines the sensitivity of the card detection process.
 - **Card matching threshold**: This value determines how closely a detected card needs to match an image in the database.
 
-### A Self-Sufficient but Static Component
+### Keeping the Card Data Up to Date
 
-This component is **fully autonomous** and works as long as the card images exist in the database. However, it won’t automatically update with newly released Pokémon cards. If you plan to integrate this into an app and want future cards to be recognized, you’ll need to **update the card JSON files and corresponding images**. 
+The component works as long as the card images exist in the database, but it does not fetch new cards by itself. If you integrate it into an app and want new sets to be recognized, **update the card JSON files and corresponding images**. No retraining is needed.
 
-All the necessary files can be found right here in the repo — no need to search anywhere else. And hey, if you hit a snag or have questions, feel free to **reach out anytime**. I’m happy to help!
+All the necessary files can be found right here in the repo. And if you hit a snag or have questions, feel free to **reach out anytime**. I'm happy to help!
 
 ### Getting Started
 
-Ready to dive in? Here’s how to run the project:
+Here's how to run the project:
 
 ```bash
-git clone [https://github.com/1vcian/Pokemon-TCGP-Card-Scanner](https://github.com/1vcian/Pokemon-TCGP-Card-Scanner)
+git clone https://github.com/1vcian/Pokemon-TCGP-Card-Scanner
 cd Pokemon-TCGP-Card-Scanner/pokemon-tcgp-card-scanner/
 npm install
 npm run dev
 ```
-That’s it! You’ll be up and running in no time.
 
-Thanks a ton for checking out this project — happy coding and happy collecting! Catch 'em all! 🎉
+Thanks a ton for checking out this project. Happy coding and happy collecting! Catch 'em all! 🎉
 <p align="center"><img width="672" alt="image" src="https://github.com/user-attachments/assets/df22531f-a535-47e9-b20a-2e0aca44455c"></p>
 
 **Repo:** [TCG Pocket Collection Tracker](https://github.com/marcelpanse/tcg-pocket-collection-tracker)
 
-**Model:** [Trained YOLO11 Nano OBB](https://hub.ultralytics.com/models/dQfecRsRsXbAKXOXHLHJ)
+**Model:** [Trained YOLO11 Nano OBB](https://platform.ultralytics.com/1vcian/pokemoncarddetector)
 
-**Dataset:** [10k Synthetic Cards Dataset](https://hub.ultralytics.com/datasets/8awcqoIQP0jIXIMDOCsC)
-
+**Dataset:** [10k Synthetic Cards Dataset](https://platform.ultralytics.com/1vcian/datasets/pockemon-tcg-obb-10k)
